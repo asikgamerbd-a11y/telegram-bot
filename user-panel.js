@@ -12,7 +12,7 @@ admin.initializeApp({
 const db = admin.firestore();
 
 // Bot token from environment variable
-const token = process.env.BOT_TOKEN || 'YOUR_BOT_TOKEN';
+const token = process.env.BOT_TOKEN || '8565057887:AAFzGgfn8yncRpeze888-2k0GrLmyKQfFKA';
 const bot = new TelegramBot(token, { polling: true });
 
 // Store user states
