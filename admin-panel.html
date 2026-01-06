@@ -1,0 +1,1309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Bot Admin Panel</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>
+    <script src="firebase-config.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .login-container, .admin-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+            overflow: hidden;
+            display: none;
+        }
+        
+        .admin-container {
+            display: none;
+        }
+        
+        .login-form {
+            padding: 50px;
+            text-align: center;
+        }
+        
+        .login-form h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+        
+        .login-form input {
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            border: 2px solid #ddd;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: 0.3s;
+        }
+        
+        .login-form input:focus {
+            border-color: #667eea;
+            outline: none;
+        }
+        
+        .login-form button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: 0.3s;
+        }
+        
+        .login-form button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+        }
+        
+        .logout-btn {
+            background: white;
+            color: #667eea;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        .sidebar {
+            width: 250px;
+            background: #f8f9fa;
+            height: calc(100vh - 140px);
+            float: left;
+            border-right: 1px solid #ddd;
+        }
+        
+        .sidebar button {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            background: none;
+            text-align: left;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            transition: 0.3s;
+            font-size: 14px;
+            color: #555;
+        }
+        
+        .sidebar button:hover {
+            background: #e9ecef;
+            color: #667eea;
+        }
+        
+        .sidebar button.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .content {
+            margin-left: 250px;
+            padding: 30px;
+            height: calc(100vh - 140px);
+            overflow-y: auto;
+        }
+        
+        .section {
+            display: none;
+        }
+        
+        .section.active {
+            display: block;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+            border: 1px solid #eee;
+        }
+        
+        .card h3 {
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        .form-group textarea {
+            height: 100px;
+            resize: vertical;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: 0.3s;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .btn-success {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .table-container {
+            overflow-x: auto;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        th {
+            background: #f8f9fa;
+            color: #333;
+            font-weight: 600;
+        }
+        
+        tr:hover {
+            background: #f9f9f9;
+        }
+        
+        .status-pending {
+            color: #ffc107;
+            font-weight: bold;
+        }
+        
+        .status-approved {
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        .status-rejected {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+        }
+        
+        .stat-card h4 {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+        
+        .stat-card .number {
+            font-size: 36px;
+            font-weight: bold;
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 10px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .notification.success {
+            background: #28a745;
+        }
+        
+        .notification.error {
+            background: #dc3545;
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1001;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .close-modal {
+            float: right;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+        }
+        
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #eee;
+            margin-bottom: 20px;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+        }
+        
+        .tab.active {
+            border-bottom: 2px solid #667eea;
+            color: #667eea;
+            font-weight: 500;
+        }
+        
+        .channel-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .channel-item {
+            background: #f8f9fa;
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+        
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+        
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 34px;
+        }
+        
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .slider {
+            background-color: #667eea;
+        }
+        
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Screen -->
+    <div class="login-container" id="loginContainer">
+        <div class="login-form">
+            <h1>🔐 Admin Login</h1>
+            <input type="password" id="adminPassword" placeholder="Enter Admin Password">
+            <button onclick="login()">Login</button>
+        </div>
+    </div>
+    
+    <!-- Admin Dashboard -->
+    <div class="admin-container" id="adminContainer">
+        <div class="header">
+            <h1>🤖 Telegram Bot Admin Panel</h1>
+            <button class="logout-btn" onclick="logout()">Logout</button>
+        </div>
+        
+        <div class="sidebar">
+            <button onclick="showSection('dashboard')" class="active">📊 Dashboard</button>
+            <button onclick="showSection('channels')">📢 Channels</button>
+            <button onclick="showSection('products')">🛍️ Products</button>
+            <button onclick="showSection('earningLinks')">🔗 Free Earning Links</button>
+            <button onclick="showSection('paymentSettings')">💰 Payment Settings</button>
+            <button onclick="showSection('withdrawals')">💳 Withdrawals</button>
+            <button onclick="showSection('deposits')">📥 Deposits</button>
+            <button onclick="showSection('referral')">👥 Referral System</button>
+            <button onclick="showSection('users')">👤 Users</button>
+            <button onclick="showSection('botSettings')">⚙️ Bot Settings</button>
+            <button onclick="showSection('transactions')">📈 Transactions</button>
+        </div>
+        
+        <div class="content">
+            <!-- Dashboard -->
+            <div id="dashboard" class="section active">
+                <div class="stats-container">
+                    <div class="stat-card">
+                        <h4>Total Users</h4>
+                        <div class="number" id="totalUsers">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Total Balance</h4>
+                        <div class="number" id="totalBalance">$0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Pending Withdrawals</h4>
+                        <div class="number" id="pendingWithdrawals">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Today's Profit</h4>
+                        <div class="number" id="todayProfit">$0</div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h3>📊 Quick Actions</h3>
+                    <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                        <button class="btn-primary" onclick="showSection('users')">Manage Users</button>
+                        <button class="btn-primary" onclick="showSection('withdrawals')">Process Withdrawals</button>
+                        <button class="btn-primary" onclick="showSection('deposits')">View Deposits</button>
+                        <button class="btn-primary" onclick="showSection('products')">Add Product</button>
+                        <button class="btn-primary" onclick="showModal('broadcastModal')">📢 Broadcast Message</button>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <h3>📈 Recent Activities</h3>
+                    <div class="table-container">
+                        <table id="recentActivities">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>User</th>
+                                    <th>Action</th>
+                                    <th>Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Channels Management -->
+            <div id="channels" class="section">
+                <div class="card">
+                    <h3>📢 Channel Settings</h3>
+                    <div class="form-group">
+                        <label>Force Join System</label>
+                        <label class="switch">
+                            <input type="checkbox" id="forceJoinToggle" onchange="toggleForceJoin()">
+                            <span class="slider"></span>
+                        </label>
+                        <small>Enable/Disable mandatory channel joining</small>
+                    </div>
+                    
+                    <h4 style="margin-top: 30px;">Add New Channel</h4>
+                    <div class="form-group">
+                        <label>Channel Link</label>
+                        <input type="text" id="channelLink" placeholder="https://t.me/yourchannel">
+                    </div>
+                    <div class="form-group">
+                        <label>Channel ID</label>
+                        <input type="text" id="channelId" placeholder="@channelusername">
+                    </div>
+                    <button class="btn-primary" onclick="addChannel()">Add Channel</button>
+                    
+                    <h4 style="margin-top: 30px;">Current Channels</h4>
+                    <div class="channel-list" id="channelList"></div>
+                </div>
+            </div>
+            
+            <!-- Products Management -->
+            <div id="products" class="section">
+                <div class="tabs">
+                    <div class="tab active" onclick="showProductTab('sell')">Sell Products</div>
+                    <div class="tab" onclick="showProductTab('buy')">Buy Products</div>
+                </div>
+                
+                <div id="sellProducts" class="product-tab">
+                    <div class="card">
+                        <h3>🛍️ Add Sell Product</h3>
+                        <div class="form-group">
+                            <label>Product Name</label>
+                            <input type="text" id="sellProductName" placeholder="Enter product name">
+                        </div>
+                        <div class="form-group">
+                            <label>Description</label>
+                            <textarea id="sellProductDesc" placeholder="Product description"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Price ($)</label>
+                            <input type="number" id="sellProductPrice" placeholder="0.00">
+                        </div>
+                        <div class="form-group">
+                            <label>Stock Quantity</label>
+                            <input type="number" id="sellProductStock" placeholder="100">
+                        </div>
+                        <div class="form-group">
+                            <label>Category</label>
+                            <select id="sellProductCategory">
+                                <option value="digital">Digital Product</option>
+                                <option value="physical">Physical Product</option>
+                                <option value="service">Service</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Product Image URL</label>
+                            <input type="text" id="sellProductImage" placeholder="https://example.com/image.jpg">
+                        </div>
+                        <button class="btn-primary" onclick="addSellProduct()">Add Product</button>
+                    </div>
+                    
+                    <div class="card">
+                        <h3>📦 Sell Products List</h3>
+                        <div class="table-container">
+                            <table id="sellProductsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Image</th>
+                                        <th>Name</th>
+                                        <th>Price</th>
+                                        <th>Stock</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="buyProducts" class="product-tab" style="display: none;">
+                    <div class="card">
+                        <h3>💰 Add Buy Product</h3>
+                        <div class="form-group">
+                            <label>Product Name</label>
+                            <input type="text" id="buyProductName" placeholder="e.g., Old Mobile Phone">
+                        </div>
+                        <div class="form-group">
+                            <label>Description</label>
+                            <textarea id="buyProductDesc" placeholder="What you want to buy"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Max Price ($)</label>
+                            <input type="number" id="buyProductPrice" placeholder="0.00">
+                        </div>
+                        <div class="form-group">
+                            <label>Category</label>
+                            <input type="text" id="buyProductCategory" placeholder="Electronics, Clothes, etc.">
+                        </div>
+                        <button class="btn-primary" onclick="addBuyProduct()">Add Buy Request</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Earning Links -->
+            <div id="earningLinks" class="section">
+                <div class="card">
+                    <h3>🔗 Free Earning Links</h3>
+                    <div class="form-group">
+                        <label>Add New Earning Link</label>
+                        <input type="text" id="earningLink" placeholder="https://example.com/earn">
+                    </div>
+                    <div class="form-group">
+                        <label>Reward Amount ($)</label>
+                        <input type="number" id="earningReward" placeholder="0.10" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label>Link Title</label>
+                        <input type="text" id="earningTitle" placeholder="Complete survey and earn $0.10">
+                    </div>
+                    <button class="btn-primary" onclick="addEarningLink()">Add Link</button>
+                    
+                    <h4 style="margin-top: 30px;">Current Links</h4>
+                    <div class="table-container">
+                        <table id="earningLinksTable">
+                            <thead>
+                                <tr>
+                                    <th>Title</th>
+                                    <th>Link</th>
+                                    <th>Reward</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Payment Settings -->
+            <div id="paymentSettings" class="section">
+                <div class="card">
+                    <h3>💰 Payment Methods</h3>
+                    <div class="form-group">
+                        <label>bKash Number</label>
+                        <input type="text" id="bkashNumber" placeholder="01XXXXXXXXX">
+                    </div>
+                    <div class="form-group">
+                        <label>Nagad Number</label>
+                        <input type="text" id="nagadNumber" placeholder="01XXXXXXXXX">
+                    </div>
+                    <div class="form-group">
+                        <label>Binance ID</label>
+                        <input type="text" id="binanceId" placeholder="Binance ID">
+                    </div>
+                    <div class="form-group">
+                        <label>Crypto Address (BTC)</label>
+                        <input type="text" id="btcAddress" placeholder="1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa">
+                    </div>
+                    <div class="form-group">
+                        <label>Crypto Address (USDT TRC20)</label>
+                        <input type="text" id="usdtAddress" placeholder="TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t">
+                    </div>
+                    <button class="btn-primary" onclick="savePaymentMethods()">Save Payment Methods</button>
+                </div>
+            </div>
+            
+            <!-- Withdrawals -->
+            <div id="withdrawals" class="section">
+                <div class="card">
+                    <h3>💳 Pending Withdrawals</h3>
+                    <div class="table-container">
+                        <table id="withdrawalsTable">
+                            <thead>
+                                <tr>
+                                    <th>User ID</th>
+                                    <th>Amount</th>
+                                    <th>Method</th>
+                                    <th>Account</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Deposits -->
+            <div id="deposits" class="section">
+                <div class="card">
+                    <h3>📥 Deposit Requests</h3>
+                    <div class="table-container">
+                        <table id="depositsTable">
+                            <thead>
+                                <tr>
+                                    <th>User ID</th>
+                                    <th>Amount</th>
+                                    <th>Method</th>
+                                    <th>Screenshot</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Referral System -->
+            <div id="referral" class="section">
+                <div class="card">
+                    <h3>👥 Referral Settings</h3>
+                    <div class="form-group">
+                        <label>Referral Bonus ($)</label>
+                        <input type="number" id="referralBonus" placeholder="1.00" step="0.01">
+                        <small>Amount to give for each successful referral</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Minimum Withdrawal ($)</label>
+                        <input type="number" id="minWithdrawal" placeholder="5.00" step="0.01">
+                    </div>
+                    <div class="form-group">
+                        <label>Maximum Withdrawal ($)</label>
+                        <input type="number" id="maxWithdrawal" placeholder="1000.00" step="0.01">
+                    </div>
+                    <button class="btn-primary" onclick="saveReferralSettings()">Save Settings</button>
+                    
+                    <h4 style="margin-top: 30px;">Top Referrers</h4>
+                    <div class="table-container">
+                        <table id="topReferrers">
+                            <thead>
+                                <tr>
+                                    <th>User ID</th>
+                                    <th>Referrals</th>
+                                    <th>Earned</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Users Management -->
+            <div id="users" class="section">
+                <div class="card">
+                    <h3>👤 All Users</h3>
+                    <div class="table-container">
+                        <table id="usersTable">
+                            <thead>
+                                <tr>
+                                    <th>User ID</th>
+                                    <th>Username</th>
+                                    <th>Balance</th>
+                                    <th>Referrals</th>
+                                    <th>Joined</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Bot Settings -->
+            <div id="botSettings" class="section">
+                <div class="card">
+                    <h3>⚙️ Bot Configuration</h3>
+                    <div class="form-group">
+                        <label>Bot Token</label>
+                        <input type="text" id="botToken" placeholder="Enter bot token">
+                    </div>
+                    <div class="form-group">
+                        <label>Channel ID for Notifications</label>
+                        <input type="text" id="notificationChannel" placeholder="@channelusername">
+                    </div>
+                    <div class="form-group">
+                        <label>Welcome Message</label>
+                        <textarea id="welcomeMessage" placeholder="Welcome message for new users"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Minimum Deposit ($)</label>
+                        <input type="number" id="minDeposit" placeholder="1.00" step="0.01">
+                    </div>
+                    <button class="btn-primary" onclick="saveBotSettings()">Save Settings</button>
+                </div>
+            </div>
+            
+            <!-- Transactions -->
+            <div id="transactions" class="section">
+                <div class="card">
+                    <h3>📈 All Transactions</h3>
+                    <div class="table-container">
+                        <table id="transactionsTable">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>User</th>
+                                    <th>Type</th>
+                                    <th>Amount</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modals -->
+    <div id="broadcastModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('broadcastModal')">×</span>
+            <h3>📢 Broadcast Message</h3>
+            <div class="form-group">
+                <label>Message</label>
+                <textarea id="broadcastMessage" placeholder="Enter message to send all users"></textarea>
+            </div>
+            <button class="btn-primary" onclick="sendBroadcast()">Send Broadcast</button>
+        </div>
+    </div>
+    
+    <div id="editUserModal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeModal('editUserModal')">×</span>
+            <h3>✏️ Edit User</h3>
+            <div class="form-group">
+                <label>User ID</label>
+                <input type="text" id="editUserId" readonly>
+            </div>
+            <div class="form-group">
+                <label>Balance ($)</label>
+                <input type="number" id="editUserBalance" step="0.01">
+            </div>
+            <div class="form-group">
+                <label>Add/Subtract Balance</label>
+                <input type="number" id="editUserAdjust" placeholder="+10 or -5" step="0.01">
+            </div>
+            <button class="btn-primary" onclick="updateUserBalance()">Update Balance</button>
+            <button class="btn-danger" onclick="banUser()" style="margin-top: 10px;">Ban User</button>
+        </div>
+    </div>
+    
+    <script>
+        // Admin Panel JavaScript
+        let currentUser = null;
+        
+        // Login function
+        function login() {
+            const password = document.getElementById('adminPassword').value;
+            if(password === ADMIN_PASSWORD) {
+                document.getElementById('loginContainer').style.display = 'none';
+                document.getElementById('adminContainer').style.display = 'block';
+                loadDashboard();
+                showNotification('Login successful!', 'success');
+            } else {
+                showNotification('Wrong password!', 'error');
+            }
+        }
+        
+        // Logout function
+        function logout() {
+            document.getElementById('loginContainer').style.display = 'block';
+            document.getElementById('adminContainer').style.display = 'none';
+            document.getElementById('adminPassword').value = '';
+        }
+        
+        // Show notification
+        function showNotification(message, type) {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+        
+        // Show section
+        function showSection(sectionId) {
+            // Hide all sections
+            document.querySelectorAll('.section').forEach(section => {
+                section.classList.remove('active');
+            });
+            
+            // Remove active from all sidebar buttons
+            document.querySelectorAll('.sidebar button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected section
+            document.getElementById(sectionId).classList.add('active');
+            
+            // Set active button
+            event.target.classList.add('active');
+            
+            // Load section data
+            switch(sectionId) {
+                case 'dashboard':
+                    loadDashboard();
+                    break;
+                case 'channels':
+                    loadChannels();
+                    break;
+                case 'products':
+                    loadProducts();
+                    break;
+                case 'earningLinks':
+                    loadEarningLinks();
+                    break;
+                case 'withdrawals':
+                    loadWithdrawals();
+                    break;
+                case 'deposits':
+                    loadDeposits();
+                    break;
+                case 'users':
+                    loadUsers();
+                    break;
+                case 'transactions':
+                    loadTransactions();
+                    break;
+            }
+        }
+        
+        // Load dashboard data
+        function loadDashboard() {
+            // Load stats
+            db.collection('users').get().then(snapshot => {
+                document.getElementById('totalUsers').textContent = snapshot.size;
+                
+                let totalBalance = 0;
+                snapshot.forEach(doc => {
+                    totalBalance += parseFloat(doc.data().balance || 0);
+                });
+                document.getElementById('totalBalance').textContent = '$' + totalBalance.toFixed(2);
+            });
+            
+            // Load recent activities
+            db.collection('transactions')
+                .orderBy('timestamp', 'desc')
+                .limit(10)
+                .get()
+                .then(snapshot => {
+                    const tbody = document.querySelector('#recentActivities tbody');
+                    tbody.innerHTML = '';
+                    
+                    snapshot.forEach(doc => {
+                        const data = doc.data();
+                        const row = `
+                            <tr>
+                                <td>${new Date(data.timestamp).toLocaleString()}</td>
+                                <td>${data.userId}</td>
+                                <td>${data.type}</td>
+                                <td>$${data.amount}</td>
+                            </tr>
+                        `;
+                        tbody.innerHTML += row;
+                    });
+                });
+        }
+        
+        // Channel management
+        function loadChannels() {
+            db.collection('channels').get().then(snapshot => {
+                const container = document.getElementById('channelList');
+                container.innerHTML = '';
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    container.innerHTML += `
+                        <div class="channel-item">
+                            ${data.name || data.id}
+                            <button class="btn-danger" onclick="deleteChannel('${doc.id}')">Delete</button>
+                        </div>
+                    `;
+                });
+            });
+        }
+        
+        function addChannel() {
+            const link = document.getElementById('channelLink').value;
+            const id = document.getElementById('channelId').value;
+            
+            if(link && id) {
+                db.collection('channels').add({
+                    link: link,
+                    id: id,
+                    addedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }).then(() => {
+                    showNotification('Channel added!', 'success');
+                    loadChannels();
+                });
+            }
+        }
+        
+        function deleteChannel(channelId) {
+            if(confirm('Delete this channel?')) {
+                db.collection('channels').doc(channelId).delete()
+                    .then(() => {
+                        showNotification('Channel deleted!', 'success');
+                        loadChannels();
+                    });
+            }
+        }
+        
+        function toggleForceJoin() {
+            const enabled = document.getElementById('forceJoinToggle').checked;
+            db.collection('settings').doc('forceJoin').set({
+                enabled: enabled
+            }).then(() => {
+                showNotification('Force join updated!', 'success');
+            });
+        }
+        
+        // Product management
+        function showProductTab(tab) {
+            document.querySelectorAll('.product-tab').forEach(div => {
+                div.style.display = 'none';
+            });
+            document.querySelectorAll('.tab').forEach(t => {
+                t.classList.remove('active');
+            });
+            
+            document.getElementById(tab + 'Products').style.display = 'block';
+            event.target.classList.add('active');
+        }
+        
+        function addSellProduct() {
+            const name = document.getElementById('sellProductName').value;
+            const desc = document.getElementById('sellProductDesc').value;
+            const price = document.getElementById('sellProductPrice').value;
+            const stock = document.getElementById('sellProductStock').value;
+            const category = document.getElementById('sellProductCategory').value;
+            const image = document.getElementById('sellProductImage').value;
+            
+            if(name && price) {
+                db.collection('products').add({
+                    name: name,
+                    description: desc,
+                    price: parseFloat(price),
+                    stock: parseInt(stock),
+                    category: category,
+                    image: image,
+                    type: 'sell',
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                }).then(() => {
+                    showNotification('Product added!', 'success');
+                    loadProducts();
+                });
+            }
+        }
+        
+        function loadProducts() {
+            // Load sell products
+            db.collection('products').where('type', '==', 'sell').get().then(snapshot => {
+                const tbody = document.querySelector('#sellProductsTable tbody');
+                tbody.innerHTML = '';
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const row = `
+                        <tr>
+                            <td><img src="${data.image || 'https://via.placeholder.com/50'}" width="50"></td>
+                            <td>${data.name}</td>
+                            <td>$${data.price}</td>
+                            <td>${data.stock}</td>
+                            <td>
+                                <button class="btn-primary">Edit</button>
+                                <button class="btn-danger" onclick="deleteProduct('${doc.id}')">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
+            });
+        }
+        
+        // Earning links
+        function addEarningLink() {
+            const link = document.getElementById('earningLink').value;
+            const reward = document.getElementById('earningReward').value;
+            const title = document.getElementById('earningTitle').value;
+            
+            if(link && reward) {
+                db.collection('earningLinks').add({
+                    link: link,
+                    reward: parseFloat(reward),
+                    title: title,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                }).then(() => {
+                    showNotification('Earning link added!', 'success');
+                    loadEarningLinks();
+                });
+            }
+        }
+        
+        function loadEarningLinks() {
+            db.collection('earningLinks').get().then(snapshot => {
+                const tbody = document.querySelector('#earningLinksTable tbody');
+                tbody.innerHTML = '';
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const row = `
+                        <tr>
+                            <td>${data.title}</td>
+                            <td><a href="${data.link}" target="_blank">Link</a></td>
+                            <td>$${data.reward}</td>
+                            <td>
+                                <button class="btn-danger" onclick="deleteEarningLink('${doc.id}')">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
+            });
+        }
+        
+        // Payment methods
+        function savePaymentMethods() {
+            const methods = {
+                bkash: document.getElementById('bkashNumber').value,
+                nagad: document.getElementById('nagadNumber').value,
+                binance: document.getElementById('binanceId').value,
+                btc: document.getElementById('btcAddress').value,
+                usdt: document.getElementById('usdtAddress').value
+            };
+            
+            db.collection('settings').doc('paymentMethods').set(methods)
+                .then(() => showNotification('Payment methods saved!', 'success'));
+        }
+        
+        // Withdrawals
+        function loadWithdrawals() {
+            db.collection('withdrawals').where('status', '==', 'pending').get().then(snapshot => {
+                const tbody = document.querySelector('#withdrawalsTable tbody');
+                tbody.innerHTML = '';
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const row = `
+                        <tr>
+                            <td>${data.userId}</td>
+                            <td>$${data.amount}</td>
+                            <td>${data.method}</td>
+                            <td>${data.account}</td>
+                            <td class="status-pending">${data.status}</td>
+                            <td>
+                                <button class="btn-success" onclick="approveWithdrawal('${doc.id}')">Approve</button>
+                                <button class="btn-danger" onclick="rejectWithdrawal('${doc.id}')">Reject</button>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
+            });
+        }
+        
+        function approveWithdrawal(id) {
+            db.collection('withdrawals').doc(id).update({
+                status: 'approved',
+                processedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }).then(() => {
+                showNotification('Withdrawal approved!', 'success');
+                loadWithdrawals();
+            });
+        }
+        
+        // Deposits
+        function loadDeposits() {
+            db.collection('deposits').where('status', '==', 'pending').get().then(snapshot => {
+                const tbody = document.querySelector('#depositsTable tbody');
+                tbody.innerHTML = '';
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const row = `
+                        <tr>
+                            <td>${data.userId}</td>
+                            <td>$${data.amount}</td>
+                            <td>${data.method}</td>
+                            <td><a href="${data.screenshot}" target="_blank">View</a></td>
+                            <td class="status-pending">${data.status}</td>
+                            <td>
+                                <button class="btn-success" onclick="approveDeposit('${doc.id}')">Approve</button>
+                                <button class="btn-danger" onclick="rejectDeposit('${doc.id}')">Reject</button>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
+            });
+        }
+        
+        // Users management
+        function loadUsers() {
+            db.collection('users').get().then(snapshot => {
+                const tbody = document.querySelector('#usersTable tbody');
+                tbody.innerHTML = '';
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const row = `
+                        <tr>
+                            <td>${doc.id}</td>
+                            <td>${data.username || 'N/A'}</td>
+                            <td>$${data.balance || 0}</td>
+                            <td>${data.referrals || 0}</td>
+                            <td>${new Date(data.joinedAt).toLocaleDateString()}</td>
+                            <td>
+                                <button class="btn-primary" onclick="editUser('${doc.id}')">Edit</button>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
+            });
+        }
+        
+        function editUser(userId) {
+            document.getElementById('editUserId').value = userId;
+            showModal('editUserModal');
+        }
+        
+        // Transactions
+        function loadTransactions() {
+            db.collection('transactions')
+                .orderBy('timestamp', 'desc')
+                .get()
+                .then(snapshot => {
+                    const tbody = document.querySelector('#transactionsTable tbody');
+                    tbody.innerHTML = '';
+                    
+                    snapshot.forEach(doc => {
+                        const data = doc.data();
+                        const statusClass = data.status ? `status-${data.status}` : '';
+                        const row = `
+                            <tr>
+                                <td>${new Date(data.timestamp).toLocaleString()}</td>
+                                <td>${data.userId}</td>
+                                <td>${data.type}</td>
+                                <td>$${data.amount}</td>
+                                <td class="${statusClass}">${data.status || ''}</td>
+                            </tr>
+                        `;
+                        tbody.innerHTML += row;
+                    });
+                });
+        }
+        
+        // Modal functions
+        function showModal(modalId) {
+            document.getElementById(modalId).style.display = 'flex';
+        }
+        
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+        
+        // Broadcast message
+        function sendBroadcast() {
+            const message = document.getElementById('broadcastMessage').value;
+            if(message) {
+                showNotification('Broadcast sent to all users!', 'success');
+                closeModal('broadcastModal');
+            }
+        }
+        
+        // Initialize
+        window.onload = function() {
+            document.getElementById('loginContainer').style.display = 'block';
+        };
+    </script>
+</body>
+</html>
