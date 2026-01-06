@@ -1,26 +1,19 @@
 {
   "name": "telegram-bot",
   "version": "1.0.0",
-  "description": "Telegram Bot with Admin Panel",
+  "description": "Advanced Telegram Bot with Admin Panel",
   "main": "user-panel.js",
   "scripts": {
     "start": "node user-panel.js",
-    "dev": "nodemon user-panel.js"
+    "admin": "open admin-panel.html"
   },
   "dependencies": {
-    "telegraf": "^4.12.2",
-    "firebase": "^9.22.0",
-    "dotenv": "^16.0.3"
+    "node-telegram-bot-api": "^0.61.0",
+    "firebase-admin": "^11.11.0",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1"
   },
-  "devDependencies": {
-    "nodemon": "^2.0.22"
-  },
-  "keywords": [
-    "telegram",
-    "bot",
-    "firebase",
-    "admin-panel"
-  ],
-  "author": "Your Name",
-  "license": "MIT"
+  "engines": {
+    "node": ">=14.0.0"
+  }
 }
