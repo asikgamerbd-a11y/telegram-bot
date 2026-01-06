@@ -1,570 +1,477 @@
-// user-panel.js
-const { Telegraf, Markup } = require('telegraf');
-const { db, collection, doc, setDoc, getDoc, getDocs, updateDoc, query, where, orderBy } = require('./firebase-config');
+const TelegramBot = require('node-telegram-bot-api');
+const admin = require('firebase-admin');
+const axios = require('axios');
+const path = require('path');
 
-// Bot Token (You need to set this from @BotFather)
-const BOT_TOKEN = process.env.BOT_TOKEN || 'YOUR_BOT_TOKEN_HERE';
+// Initialize Firebase
+const serviceAccount = require('./serviceAccountKey.json');
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
 
-// Initialize bot
-const bot = new Telegraf(BOT_TOKEN);
+const db = admin.firestore();
+
+// Bot token from environment variable
+const token = process.env.BOT_TOKEN || 'YOUR_BOT_TOKEN';
+const bot = new TelegramBot(token, { polling: true });
 
 // Store user states
-const userStates = new Map();
+const userStates = {};
+const userData = {};
+
+// Channel check configuration
+const FORCE_JOIN = true; // Set from admin panel
+const REQUIRED_CHANNELS = ['@yourchannel1', '@yourchannel2'];
 
 // Main menu
-const mainMenu = Markup.keyboard([
-    ['💰 Balance', '🎁 Free Earning'],
-    ['🛍 Products', '👥 Referral'],
-    ['📤 Withdraw', '💳 Deposit'],
-    ['ℹ️ Help', '📞 Support']
-]).resize();
+const mainMenu = {
+    reply_markup: {
+        keyboard: [
+            ['🛍️ Products', '💰 Free Earning'],
+            ['💳 Balance', '📤 Withdraw'],
+            ['📥 Deposit', '👥 Referral'],
+            ['🆘 Help', '📊 Dashboard']
+        ],
+        resize_keyboard: true
+    }
+};
 
-// Admin menu (for admin only)
-const adminMenu = Markup.keyboard([
-    ['📊 Statistics', '👤 Users List'],
-    ['⚙️ Settings', '📢 Broadcast'],
-    ['🔙 Main Menu']
-]).resize();
+// Check if user joined required channels
+async function checkChannels(userId) {
+    if (!FORCE_JOIN) return true;
+    
+    for (const channel of REQUIRED_CHANNELS) {
+        try {
+            const member = await bot.getChatMember(channel, userId);
+            if (member.status === 'left' || member.status === 'kicked') {
+                return false;
+            }
+        } catch (error) {
+            console.error('Error checking channel:', error);
+        }
+    }
+    return true;
+}
 
-// Product categories keyboard
-const productCategories = Markup.inlineKeyboard([
-    [
-        Markup.button.callback('📱 Electronics', 'category_electronics'),
-        Markup.button.callback('👕 Fashion', 'category_fashion')
-    ],
-    [
-        Markup.button.callback('💄 Beauty', 'category_beauty'),
-        Markup.button.callback('🏠 Home', 'category_home')
-    ],
-    [
-        Markup.button.callback('🎮 Games', 'category_games'),
-        Markup.button.callback('📚 Books', 'category_books')
-    ]
-]);
-
-// Start command
-bot.start(async (ctx) => {
-    const userId = ctx.from.id;
-    const username = ctx.from.username;
+// Welcome message
+bot.onText(/\/start/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const username = msg.from.username;
+    const referralCode = msg.text.split(' ')[1];
     
-    // Check if user is joining from referral
-    const referralCode = ctx.payload;
+    // Check channel membership
+    const hasJoined = await checkChannels(userId);
+    if (!hasJoined) {
+        const channelList = REQUIRED_CHANNELS.map(ch => `• ${ch}`).join('\n');
+        return bot.sendMessage(chatId, 
+            `⚠️ *Please join our channels first:*\n\n${channelList}\n\n` +
+            `After joining, send /start again.`,
+            { parse_mode: 'Markdown' }
+        );
+    }
     
-    // Save user to database
-    const userRef = doc(db, 'users', userId.toString());
-    const userDoc = await getDoc(userRef);
+    // Register user if new
+    const userRef = db.collection('users').doc(userId.toString());
+    const userDoc = await userRef.get();
     
-    if (!userDoc.exists()) {
-        // New user
-        await setDoc(userRef, {
-            userId: userId,
+    if (!userDoc.exists) {
+        const userData = {
             username: username,
+            userId: userId,
             balance: 0,
             referrals: 0,
-            referralCode: generateReferralCode(),
-            referredBy: referralCode || null,
-            isActive: true,
+            referralCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
             joinedAt: new Date(),
-            lastActive: new Date()
-        });
+            totalEarned: 0
+        };
         
-        // If referred by someone, give bonus
+        // Handle referral
         if (referralCode) {
-            const referrerRef = doc(db, 'users', referralCode);
-            const referrerDoc = await getDoc(referrerRef);
+            const referrerQuery = await db.collection('users')
+                .where('referralCode', '==', referralCode)
+                .get();
             
-            if (referrerDoc.exists()) {
-                const referrerData = referrerDoc.data();
-                const referralBonus = await getSetting('referralBonus') || 50;
+            if (!referrerQuery.empty) {
+                const referrerId = referrerQuery.docs[0].id;
+                userData.referredBy = referrerId;
                 
-                // Update referrer's balance and referral count
-                await updateDoc(referrerRef, {
-                    balance: (referrerData.balance || 0) + referralBonus,
-                    referrals: (referrerData.referrals || 0) + 1
+                // Update referrer's count
+                await db.collection('users').doc(referrerId).update({
+                    referrals: admin.firestore.FieldValue.increment(1),
+                    balance: admin.firestore.FieldValue.increment(5) // $5 referral bonus
                 });
                 
-                // Create referral transaction
-                const transactionRef = doc(collection(db, 'transactions'));
-                await setDoc(transactionRef, {
-                    userId: referralCode,
-                    type: 'referral',
-                    amount: referralBonus,
-                    status: 'approved',
-                    description: `Referral bonus from @${username}`,
-                    timestamp: new Date()
+                // Record referral transaction
+                await db.collection('transactions').add({
+                    userId: referrerId,
+                    type: 'referral_bonus',
+                    amount: 5,
+                    timestamp: new Date(),
+                    referredUser: userId
                 });
             }
         }
         
-        // Check channel join requirement
-        const forceJoin = await getSetting('forceJoin');
-        if (forceJoin) {
-            const channels = await getChannels();
-            const joinMessage = await checkChannelJoin(ctx, userId, channels);
-            if (joinMessage) {
-                return ctx.reply(joinMessage);
-            }
-        }
+        await userRef.set(userData);
         
-        // Send welcome message
-        const welcomeMessage = await getSetting('welcomeMessage') || 
-            `Welcome @${username} to our bot! 🎉\n\n` +
-            `Your balance: ৳0\n` +
-            `Your referral code: ${(await getDoc(userRef)).data().referralCode}\n\n` +
-            `Share your referral link to earn money!`;
-        
-        ctx.reply(welcomeMessage, mainMenu);
-    } else {
-        // Existing user
-        await updateDoc(userRef, {
-            lastActive: new Date()
+        // Record transaction
+        await db.collection('transactions').add({
+            userId: userId,
+            type: 'welcome_bonus',
+            amount: 1,
+            timestamp: new Date()
         });
         
-        ctx.reply(`Welcome back @${username}! 👋`, mainMenu);
+        // Give welcome bonus
+        await userRef.update({
+            balance: admin.firestore.FieldValue.increment(1)
+        });
     }
+    
+    const welcomeMsg = `👋 *Welcome to our Telegram Bot!*\n\n` +
+        `💰 *Balance:* $1.00 (Welcome Bonus)\n` +
+        `👥 *Referral Code:* \`${userDoc.exists ? userDoc.data().referralCode : userData.referralCode}\`\n\n` +
+        `Use the menu below to navigate:`;
+    
+    bot.sendMessage(chatId, welcomeMsg, {
+        parse_mode: 'Markdown',
+        ...mainMenu
+    });
 });
 
 // Balance command
-bot.hears('💰 Balance', async (ctx) => {
-    const userId = ctx.from.id;
-    const userRef = doc(db, 'users', userId.toString());
-    const userDoc = await getDoc(userRef);
+bot.onText(/💳 Balance/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
     
-    if (userDoc.exists()) {
-        const userData = userDoc.data();
-        const message = 
-            `💰 Your Balance\n\n` +
-            `Available: ৳${userData.balance || 0}\n` +
-            `Pending: ৳0\n` +
-            `Total Earned: ৳${userData.totalEarned || 0}\n\n` +
-            `👥 Referrals: ${userData.referrals || 0}\n` +
-            `Your Code: ${userData.referralCode}\n\n` +
-            `Share this link: https://t.me/${ctx.botInfo.username}?start=${userData.referralCode}`;
-        
-        ctx.reply(message);
-    }
+    const userDoc = await db.collection('users').doc(userId.toString()).get();
+    if (!userDoc.exists) return;
+    
+    const userData = userDoc.data();
+    
+    const balanceMsg = `💰 *Your Balance*\n\n` +
+        `📊 *Available:* $${userData.balance.toFixed(2)}\n` +
+        `👥 *Referrals:* ${userData.referrals || 0}\n` +
+        `💎 *Total Earned:* $${userData.totalEarned || 0}\n\n` +
+        `🔗 *Your Referral Link:*\n` +
+        `https://t.me/yourbot?start=${userData.referralCode}\n\n` +
+        `Invite friends and earn $5 for each!`;
+    
+    bot.sendMessage(chatId, balanceMsg, { parse_mode: 'Markdown' });
 });
 
-// Free Earning command
-bot.hears('🎁 Free Earning', async (ctx) => {
-    const links = await getEarningLinks();
+// Products menu
+bot.onText(/🛍️ Products/, async (msg) => {
+    const chatId = msg.chat.id;
+    
+    const productsMenu = {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '🛒 Buy Products', callback_data: 'buy_products' }],
+                [{ text: '💰 Sell Products', callback_data: 'sell_products' }],
+                [{ text: '📋 My Orders', callback_data: 'my_orders' }]
+            ]
+        }
+    };
+    
+    bot.sendMessage(chatId, '🛍️ *Products Menu*\n\nChoose an option:', {
+        parse_mode: 'Markdown',
+        ...productsMenu
+    });
+});
+
+// Free Earning
+bot.onText(/💰 Free Earning/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    
+    // Get earning links from database
+    const linksSnapshot = await db.collection('earningLinks').get();
+    const links = [];
+    
+    linksSnapshot.forEach(doc => {
+        links.push(doc.data());
+    });
     
     if (links.length === 0) {
-        return ctx.reply('No earning links available at the moment. Check back later!');
+        return bot.sendMessage(chatId, 'No earning links available at the moment.');
     }
     
-    const message = `🎁 Free Earning Links\n\n` +
-        `Complete tasks to earn money!\n\n` +
-        `${links.map((link, index) => 
-            `${index + 1}. ${link.title}\n` +
-            `   Reward: ৳${link.reward}\n` +
-            `   Link: ${link.url}\n`
-        ).join('\n')}`;
+    const keyboard = [];
+    links.forEach((link, index) => {
+        keyboard.push([{
+            text: `${link.title} - $${link.reward}`,
+            url: link.link
+        }]);
+    });
     
-    ctx.reply(message);
-});
-
-// Products command
-bot.hears('🛍 Products', async (ctx) => {
-    const products = await getProducts();
+    keyboard.push([{ text: '✅ Claim Reward', callback_data: 'claim_earnings' }]);
     
-    if (products.length === 0) {
-        return ctx.reply('No products available at the moment.');
-    }
-    
-    const message = `🛍 Available Products\n\n` +
-        `Select a category:`;
-    
-    ctx.reply(message, productCategories);
-});
-
-// Referral command
-bot.hears('👥 Referral', async (ctx) => {
-    const userId = ctx.from.id;
-    const userRef = doc(db, 'users', userId.toString());
-    const userDoc = await getDoc(userRef);
-    
-    if (userDoc.exists()) {
-        const userData = userDoc.data();
-        const referralBonus = await getSetting('referralBonus') || 50;
-        
-        const message = 
-            `👥 Referral System\n\n` +
-            `Invite friends and earn ৳${referralBonus} for each successful referral!\n\n` +
-            `Your Referral Code: ${userData.referralCode}\n` +
-            `Your Referrals: ${userData.referrals || 0}\n` +
-            `Earned from Referrals: ৳${userData.referralEarnings || 0}\n\n` +
-            `📢 Your Referral Link:\n` +
-            `https://t.me/${ctx.botInfo.username}?start=${userData.referralCode}\n\n` +
-            `Share this link with your friends!`;
-        
-        ctx.reply(message);
-    }
+    bot.sendMessage(chatId, '💰 *Free Earning Tasks*\n\nComplete tasks and earn money:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: keyboard }
+    });
 });
 
 // Withdraw command
-bot.hears('📤 Withdraw', async (ctx) => {
-    const userId = ctx.from.id;
-    const userRef = doc(db, 'users', userId.toString());
-    const userDoc = await getDoc(userRef);
+bot.onText(/📤 Withdraw/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
     
-    if (userDoc.exists()) {
-        const userData = userDoc.data();
-        const minWithdraw = await getSetting('minWithdraw') || 100;
-        const maxWithdraw = await getSetting('maxWithdraw') || 5000;
-        
-        if (userData.balance < minWithdraw) {
-            return ctx.reply(`Minimum withdraw amount is ৳${minWithdraw}. Your current balance is ৳${userData.balance}`);
-        }
-        
-        userStates.set(userId, 'awaiting_withdraw_method');
-        
-        const methods = await getPaymentMethods('withdraw');
-        const keyboard = Markup.inlineKeyboard(
-            methods.map(method => 
-                [Markup.button.callback(method.name, `withdraw_${method.id}`)]
-            )
-        );
-        
-        ctx.reply(
-            `📤 Withdraw Money\n\n` +
-            `Available Balance: ৳${userData.balance}\n` +
-            `Minimum: ৳${minWithdraw}\n` +
-            `Maximum: ৳${maxWithdraw}\n\n` +
-            `Select withdrawal method:`,
-            keyboard
+    const userDoc = await db.collection('users').doc(userId.toString()).get();
+    if (!userDoc.exists) return;
+    
+    const userData = userDoc.data();
+    
+    // Check minimum withdrawal
+    const settingsDoc = await db.collection('settings').doc('withdrawal').get();
+    const minWithdrawal = settingsDoc.exists ? settingsDoc.data().minAmount : 5;
+    
+    if (userData.balance < minWithdrawal) {
+        return bot.sendMessage(chatId, 
+            `❌ *Minimum withdrawal is $${minWithdrawal}*\n\n` +
+            `Your current balance: $${userData.balance.toFixed(2)}`,
+            { parse_mode: 'Markdown' }
         );
     }
+    
+    // Ask for withdrawal method
+    const methodsKeyboard = {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: 'bKash', callback_data: 'withdraw_bkash' }],
+                [{ text: 'Nagad', callback_data: 'withdraw_nagad' }],
+                [{ text: 'Binance', callback_data: 'withdraw_binance' }],
+                [{ text: 'Crypto (USDT)', callback_data: 'withdraw_crypto' }]
+            ]
+        }
+    };
+    
+    bot.sendMessage(chatId, 
+        `💳 *Withdraw Funds*\n\n` +
+        `💰 *Available:* $${userData.balance.toFixed(2)}\n` +
+        `📊 *Minimum:* $${minWithdrawal}\n\n` +
+        `Choose withdrawal method:`,
+        { parse_mode: 'Markdown', ...methodsKeyboard }
+    );
 });
 
 // Deposit command
-bot.hears('💳 Deposit', async (ctx) => {
-    const methods = await getPaymentMethods('deposit');
+bot.onText(/📥 Deposit/, async (msg) => {
+    const chatId = msg.chat.id;
     
-    const keyboard = Markup.inlineKeyboard(
-        methods.map(method => 
-            [Markup.button.callback(`${method.name}`, `deposit_${method.id}`)]
-        )
-    );
+    // Get payment methods from database
+    const paymentDoc = await db.collection('settings').doc('paymentMethods').get();
+    const methods = paymentDoc.exists ? paymentDoc.data() : {};
     
-    ctx.reply(
-        `💳 Deposit Money\n\n` +
-        `Select deposit method:\n` +
-        `Minimum deposit: ৳50\n` +
-        `Maximum deposit: ৳50000`,
-        keyboard
-    );
+    let depositMsg = `💳 *Deposit Funds*\n\n`;
+    depositMsg += `*Available Methods:*\n\n`;
+    
+    if (methods.bkash) depositMsg += `📱 *bKash:* ${methods.bkash}\n`;
+    if (methods.nagad) depositMsg += `📲 *Nagad:* ${methods.nagad}\n`;
+    if (methods.binance) depositMsg += `💰 *Binance:* ${methods.binance}\n`;
+    if (methods.usdt) depositMsg += `₿ *USDT (TRC20):* ${methods.usdt}\n`;
+    if (methods.btc) depositMsg += `₿ *BTC:* ${methods.btc}\n`;
+    
+    depositMsg += `\n*Instructions:*\n`;
+    depositMsg += `1. Send money to any account above\n`;
+    depositMsg += `2. Take screenshot of payment\n`;
+    depositMsg += `3. Send screenshot here with amount\n\n`;
+    depositMsg += `✅ Your balance will be updated within 5 minutes`;
+    
+    bot.sendMessage(chatId, depositMsg, { parse_mode: 'Markdown' });
 });
 
-// Handle callback queries
-bot.on('callback_query', async (ctx) => {
-    const data = ctx.callbackQuery.data;
-    const userId = ctx.from.id;
+// Referral system
+bot.onText(/👥 Referral/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
     
-    if (data.startsWith('category_')) {
-        const category = data.split('_')[1];
-        await showCategoryProducts(ctx, category);
-    }
-    else if (data.startsWith('withdraw_')) {
-        const methodId = data.split('_')[1];
-        await handleWithdrawMethod(ctx, userId, methodId);
-    }
-    else if (data.startsWith('deposit_')) {
-        const methodId = data.split('_')[1];
-        await handleDepositMethod(ctx, userId, methodId);
-    }
-    else if (data.startsWith('product_')) {
-        const productId = data.split('_')[1];
-        await showProductDetails(ctx, productId);
-    }
+    const userDoc = await db.collection('users').doc(userId.toString()).get();
+    if (!userDoc.exists) return;
     
-    await ctx.answerCbQuery();
+    const userData = userDoc.data();
+    
+    const referralMsg = `👥 *Referral System*\n\n` +
+        `🔗 *Your Referral Code:*\n\`${userData.referralCode}\`\n\n` +
+        `🌐 *Your Referral Link:*\n` +
+        `https://t.me/yourbot?start=${userData.referralCode}\n\n` +
+        `💰 *Earn $5 for each referral*\n\n` +
+        `📊 *Stats:*\n` +
+        `• Total Referrals: ${userData.referrals || 0}\n` +
+        `• Referral Earnings: $${(userData.referrals || 0) * 5}\n\n` +
+        `*How it works:*\n` +
+        `1. Share your referral link\n` +
+        `2. When someone joins using your link\n` +
+        `3. You get $5 instantly!`;
+    
+    bot.sendMessage(chatId, referralMsg, { parse_mode: 'Markdown' });
 });
 
-// Product details function
-async function showProductDetails(ctx, productId) {
-    const productRef = doc(db, 'products', productId);
-    const productDoc = await getDoc(productRef);
+// Help command
+bot.onText(/🆘 Help/, (msg) => {
+    const chatId = msg.chat.id;
     
-    if (productDoc.exists()) {
-        const product = productDoc.data();
-        const keyboard = Markup.inlineKeyboard([
-            [
-                Markup.button.callback('🛒 Buy Now', `buy_${productId}`),
-                Markup.button.callback('💬 Contact Seller', `contact_${productId}`)
-            ],
-            [Markup.button.callback('🔙 Back to Categories', 'back_categories')]
-        ]);
-        
-        const message = 
-            `🛍 Product Details\n\n` +
-            `Name: ${product.name}\n` +
-            `Price: ৳${product.price}\n` +
-            `Category: ${product.category}\n\n` +
-            `Description:\n${product.description}\n\n` +
-            `Seller: @${product.seller || 'admin'}\n` +
-            `Rating: ${product.rating || 'Not rated yet'}`;
-        
-        if (product.image) {
-            ctx.replyWithPhoto(product.image, {
-                caption: message,
-                ...keyboard
-            });
-        } else {
-            ctx.reply(message, keyboard);
+    const helpMsg = `🆘 *Help & Support*\n\n` +
+        `*Available Commands:*\n` +
+        `/start - Start the bot\n` +
+        `/help - Show this message\n` +
+        `/balance - Check your balance\n` +
+        `/referral - Referral system info\n\n` +
+        `*Features:*\n` +
+        `• Buy/Sell Products\n` +
+        `• Free Earning Tasks\n` +
+        `• Instant Withdrawal\n` +
+        `• Referral System\n\n` +
+        `*Support:*\n` +
+        `Contact @admin_username for help`;
+    
+    bot.sendMessage(chatId, helpMsg, { parse_mode: 'Markdown' });
+});
+
+// Dashboard
+bot.onText(/📊 Dashboard/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    
+    const userDoc = await db.collection('users').doc(userId.toString()).get();
+    if (!userDoc.exists) return;
+    
+    const userData = userDoc.data();
+    
+    // Get recent transactions
+    const transactionsSnapshot = await db.collection('transactions')
+        .where('userId', '==', userId.toString())
+        .orderBy('timestamp', 'desc')
+        .limit(5)
+        .get();
+    
+    let transactions = '';
+    transactionsSnapshot.forEach(doc => {
+        const trans = doc.data();
+        transactions += `• ${trans.type}: $${trans.amount} (${new Date(trans.timestamp).toLocaleDateString()})\n`;
+    });
+    
+    const dashboardMsg = `📊 *Your Dashboard*\n\n` +
+        `👤 *User ID:* ${userId}\n` +
+        `💰 *Balance:* $${userData.balance.toFixed(2)}\n` +
+        `👥 *Referrals:* ${userData.referrals || 0}\n` +
+        `💎 *Total Earned:* $${userData.totalEarned || 0}\n\n` +
+        `📈 *Recent Transactions:*\n${transactions || 'No transactions yet'}\n\n` +
+        `*Quick Actions:*`;
+    
+    const dashboardKeyboard = {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '🔄 Refresh', callback_data: 'refresh_dashboard' }],
+                [{ text: '📊 Full Stats', callback_data: 'full_stats' }],
+                [{ text: '🎯 Achievement', callback_data: 'achievements' }]
+            ]
         }
-    }
-}
-
-// Withdraw method handler
-async function handleWithdrawMethod(ctx, userId, methodId) {
-    const methodRef = doc(db, 'paymentMethods', methodId);
-    const methodDoc = await getDoc(methodRef);
+    };
     
-    if (methodDoc.exists()) {
-        const method = methodDoc.data();
-        userStates.set(userId, `awaiting_withdraw_amount_${methodId}`);
-        
-        ctx.reply(
-            `Selected: ${method.name}\n\n` +
-            `${method.instructions || ''}\n\n` +
-            `Enter amount to withdraw:`
-        );
-    }
-}
+    bot.sendMessage(chatId, dashboardMsg, {
+        parse_mode: 'Markdown',
+        ...dashboardKeyboard
+    });
+});
 
-// Deposit method handler
-async function handleDepositMethod(ctx, userId, methodId) {
-    const methodRef = doc(db, 'paymentMethods', methodId);
-    const methodDoc = await getDoc(methodRef);
+// Callback queries
+bot.on('callback_query', async (callbackQuery) => {
+    const msg = callbackQuery.message;
+    const userId = callbackQuery.from.id;
+    const data = callbackQuery.data;
     
-    if (methodDoc.exists()) {
-        const method = methodDoc.data();
+    if (data === 'claim_earnings') {
+        // Random earning between $0.10 and $1.00
+        const earnings = (Math.random() * 0.9 + 0.1).toFixed(2);
         
-        const message = 
-            `💳 Deposit via ${method.name}\n\n` +
-            `Send money to:\n` +
-            `${method.details || ''}\n\n` +
-            `Minimum: ৳${method.minAmount || 50}\n` +
-            `Maximum: ৳${method.maxAmount || 50000}\n\n` +
-            `After sending, please provide:\n` +
-            `1. Transaction ID\n` +
-            `2. Amount\n` +
-            `3. Screenshot\n\n` +
-            `Reply with this information to complete deposit.`;
+        await db.collection('users').doc(userId.toString()).update({
+            balance: admin.firestore.FieldValue.increment(parseFloat(earnings)),
+            totalEarned: admin.firestore.FieldValue.increment(parseFloat(earnings))
+        });
         
-        userStates.set(userId, 'awaiting_deposit_info');
-        ctx.reply(message);
+        // Record transaction
+        await db.collection('transactions').add({
+            userId: userId.toString(),
+            type: 'task_earning',
+            amount: parseFloat(earnings),
+            timestamp: new Date()
+        });
+        
+        bot.answerCallbackQuery(callbackQuery.id, {
+            text: `✅ You earned $${earnings}!`
+        });
+        
+        bot.editMessageText(`💰 *Earning Claimed!*\n\nYou earned $${earnings} from completing tasks.`, {
+            chat_id: msg.chat.id,
+            message_id: msg.message_id,
+            parse_mode: 'Markdown'
+        });
     }
-}
+});
 
-// Handle text messages
-bot.on('text', async (ctx) => {
-    const userId = ctx.from.id;
-    const text = ctx.message.text;
-    const state = userStates.get(userId);
+// Handle photo messages for deposit proof
+bot.on('photo', async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const photoId = msg.photo[msg.photo.length - 1].file_id;
     
-    if (state && state.startsWith('awaiting_withdraw_amount_')) {
-        const methodId = state.split('_').pop();
+    // Ask for amount
+    bot.sendMessage(chatId, 'Please send the deposit amount:');
+    userStates[userId] = 'awaiting_deposit_amount';
+    userData[userId] = { photoId: photoId };
+});
+
+// Handle text messages for deposit amount
+bot.on('text', async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const text = msg.text;
+    
+    if (userStates[userId] === 'awaiting_deposit_amount') {
         const amount = parseFloat(text);
         
         if (isNaN(amount) || amount <= 0) {
-            return ctx.reply('Please enter a valid amount.');
+            return bot.sendMessage(chatId, 'Please enter a valid amount.');
         }
         
-        const userRef = doc(db, 'users', userId.toString());
-        const userDoc = await getDoc(userRef);
-        
-        if (userDoc.exists()) {
-            const userData = userDoc.data();
-            const minWithdraw = await getSetting('minWithdraw') || 100;
-            const maxWithdraw = await getSetting('maxWithdraw') || 5000;
-            
-            if (amount < minWithdraw) {
-                return ctx.reply(`Minimum withdraw amount is ৳${minWithdraw}`);
-            }
-            if (amount > maxWithdraw) {
-                return ctx.reply(`Maximum withdraw amount is ৳${maxWithdraw}`);
-            }
-            if (amount > userData.balance) {
-                return ctx.reply(`Insufficient balance. Available: ৳${userData.balance}`);
-            }
-            
-            // Process withdrawal
-            userStates.delete(userId);
-            const transactionRef = doc(collection(db, 'transactions'));
-            
-            await setDoc(transactionRef, {
-                userId: userId.toString(),
-                type: 'withdraw',
-                amount: amount,
-                method: methodId,
-                status: 'pending',
-                timestamp: new Date(),
-                username: ctx.from.username
-            });
-            
-            // Update user balance
-            await updateDoc(userRef, {
-                balance: userData.balance - amount
-            });
-            
-            ctx.reply(
-                `✅ Withdrawal request submitted!\n\n` +
-                `Amount: ৳${amount}\n` +
-                `Status: Pending\n\n` +
-                `We will process your request within 24 hours.`
-            );
-            
-            // Notify admin
-            await notifyAdmin(`New withdrawal request!\nUser: @${ctx.from.username}\nAmount: ৳${amount}`);
-        }
-    }
-    else if (state === 'awaiting_deposit_info') {
-        // Process deposit information
-        userStates.delete(userId);
-        
-        const transactionRef = doc(collection(db, 'transactions'));
-        await setDoc(transactionRef, {
+        // Save deposit request
+        await db.collection('deposits').add({
             userId: userId.toString(),
-            type: 'deposit',
-            amount: 0, // Will be updated after verification
-            description: text,
+            amount: amount,
+            screenshot: userData[userId].photoId,
             status: 'pending',
-            timestamp: new Date(),
-            username: ctx.from.username
+            timestamp: new Date()
         });
         
-        ctx.reply(
-            `✅ Deposit information received!\n\n` +
-            `We will verify your payment within 1 hour.\n` +
-            `You will be notified once approved.`
+        // Notify admin channel
+        const adminChannel = '@yourchannel'; // Get from database
+        const adminMsg = `📥 *New Deposit Request*\n\n` +
+            `👤 User: @${msg.from.username || 'N/A'} (${userId})\n` +
+            `💰 Amount: $${amount}\n` +
+            `📸 Screenshot: Available`;
+        
+        bot.sendMessage(adminChannel, adminMsg, { parse_mode: 'Markdown' });
+        
+        bot.sendMessage(chatId, 
+            `✅ *Deposit request submitted!*\n\n` +
+            `💰 Amount: $${amount}\n` +
+            `⏳ Status: Pending approval\n\n` +
+            `Your balance will be updated within 30 minutes.`,
+            { parse_mode: 'Markdown' }
         );
         
-        // Notify admin with photo if available
-        await notifyAdmin(`New deposit request!\nUser: @${ctx.from.username}\nDetails: ${text}`);
+        delete userStates[userId];
+        delete userData[userId];
     }
 });
 
-// Helper functions
-async function getSetting(key) {
-    const settingRef = doc(db, 'settings', key);
-    const settingDoc = await getDoc(settingRef);
-    
-    if (settingDoc.exists()) {
-        return settingDoc.data().value;
-    }
-    return null;
-}
-
-async function getChannels() {
-    const channelsSnapshot = await getDocs(collection(db, 'channels'));
-    return channelsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-}
-
-async function getEarningLinks() {
-    const linksSnapshot = await getDocs(query(
-        collection(db, 'earningLinks'),
-        where('isActive', '==', true)
-    ));
-    return linksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-}
-
-async function getProducts(category = null) {
-    let q = collection(db, 'products');
-    if (category) {
-        q = query(q, where('category', '==', category));
-    }
-    q = query(q, where('isActive', '==', true));
-    
-    const productsSnapshot = await getDocs(q);
-    return productsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-}
-
-async function getPaymentMethods(type) {
-    const methodsSnapshot = await getDocs(query(
-        collection(db, 'paymentMethods'),
-        where('type', '==', type),
-        where('isActive', '==', true)
-    ));
-    return methodsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-}
-
-async function checkChannelJoin(ctx, userId, channels) {
-    try {
-        for (const channel of channels) {
-            const member = await ctx.telegram.getChatMember(channel.chatId, userId);
-            if (member.status === 'left' || member.status === 'kicked') {
-                return `Please join our channel first: ${channel.link}`;
-            }
-        }
-        return null;
-    } catch (error) {
-        console.error('Error checking channel join:', error);
-        return null;
-    }
-}
-
-async function showCategoryProducts(ctx, category) {
-    const products = await getProducts(category);
-    
-    if (products.length === 0) {
-        return ctx.reply(`No products available in ${category} category.`);
-    }
-    
-    const keyboard = Markup.inlineKeyboard(
-        products.map(product => 
-            [Markup.button.callback(product.name, `product_${product.id}`)]
-        ).concat([[Markup.button.callback('🔙 Back to Categories', 'back_categories')]])
-    );
-    
-    ctx.reply(
-        `🛍 Products in ${category}\n\n` +
-        `Select a product to view details:`,
-        keyboard
-    );
-}
-
-async function notifyAdmin(message) {
-    const adminId = await getSetting('adminTelegramId');
-    const channel = await getSetting('notificationChannel');
-    
-    if (adminId) {
-        try {
-            await bot.telegram.sendMessage(adminId, message);
-        } catch (error) {
-            console.error('Error notifying admin:', error);
-        }
-    }
-    
-    if (channel) {
-        try {
-            await bot.telegram.sendMessage(channel, message);
-        } catch (error) {
-            console.error('Error notifying channel:', error);
-        }
-    }
-}
-
-function generateReferralCode() {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-}
-
 // Error handling
-bot.catch((err, ctx) => {
-    console.error(`Error for ${ctx.updateType}:`, err);
-    ctx.reply('An error occurred. Please try again later.');
+bot.on('polling_error', (error) => {
+    console.error('Polling error:', error);
 });
 
 // Start bot
-bot.launch()
-    .then(() => {
-        console.log('Bot started successfully');
-    })
-    .catch(err => {
-        console.error('Failed to start bot:', err);
-    });
-
-// Enable graceful stop
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+console.log('🤖 Telegram Bot is running...');
